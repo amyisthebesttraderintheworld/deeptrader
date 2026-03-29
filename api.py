@@ -45,6 +45,24 @@ def scan():
     # Sort by rank ascending (rank 1 first)
     sorted_results = sorted(ranking.items(), key=lambda x: x[1]['rank'])
     
+    # Return both scanner results AND ticker data for n8n
+    # Fetch fresh tickers again to ensure we have the latest prices for all scanned symbols
+    from advanced_scanner.utils import get_json
+    from advanced_scanner.config import BASE_URL
+    tr_raw = get_json(BASE_URL+"/md/v3/ticker/24hr/all")
+    tr = tr_raw.get("result", [])
+    
+    # Map Phemex v3 fields to names n8n expects
+    mapped_tickers = []
+    for t in tr:
+        mapped_tickers.append({
+            "symbol": t.get("symbol"),
+            "lastPrice": t.get("lastRp", t.get("indexRp", 0)),
+            "turnover24h": t.get("turnoverRv", 0),
+            "highPrice": t.get("highRp"),
+            "lowRp": t.get("lowRp")
+        })
+
     return {
         "results": [
             {
@@ -53,7 +71,8 @@ def scan():
                 "side": i['side'], 
                 "rank": i['rank']
             } for s, i in sorted_results[:20]
-        ]
+        ],
+        "tickers": mapped_tickers
     }
 
 @app.get("/")
