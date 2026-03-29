@@ -9,6 +9,9 @@
     "restartPolicyType": "ON_FAILURE",
     "healthcheckPath": "/",
     "healthcheckTimeout": 300,
-    "watch": true
+    "watch": true,
+    "env": {
+      "PORT": "8000"
+    }
   }
 }
