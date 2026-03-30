@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 import argparse
 import numpy as np
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from advanced_scanner.fetcher import bootstrap, fetch
 from advanced_scanner.scoring import extract_features, cross_sectional_score_ranking
-from advanced_scanner.config import KLINE_LIMIT
+from advanced_scanner.config import KLINE_LIMIT, DEFAULT_CAPITAL, DEFAULT_RISK_PCT
 
 # Optional: speed up bootstrap logs by disabling typewriter effect
 import advanced_scanner.utils
@@ -12,11 +13,21 @@ advanced_scanner.utils.type_print = lambda text, delay=0: print(text)
 
 app = FastAPI()
 
+@app.get("/md/v2/ticker/24hr/all")
+def proxy_tickers():
+    """Proxy endpoint to fix n8n's buggy r.result.data lookup"""
+    from advanced_scanner.utils import get_json
+    from advanced_scanner.config import BASE_URL
+    tr_raw = get_json(BASE_URL+"/md/v3/ticker/24hr/all")
+    tr = tr_raw.get("result", [])
+    # This structure satisfies: tickerData = r.result?.data || r.data || [];
+    return {"result": {"data": tr}}
+
 @app.get("/scan")
 def scan():
     args = argparse.Namespace(
         symbol=None, top=None, threshold=25, hold=4,
-        capital=100.0, risk=0.01, max_bars=None, offset=0,
+        capital=DEFAULT_CAPITAL, risk=DEFAULT_RISK_PCT, max_bars=None, offset=0,
         scan_only=True, optimize=False, sweep=False, wfo=False, estimate=False,
         meta_commentary=False
     )
@@ -46,13 +57,11 @@ def scan():
     sorted_results = sorted(ranking.items(), key=lambda x: x[1]['rank'])
     
     # Return both scanner results AND ticker data for n8n
-    # Fetch fresh tickers again to ensure we have the latest prices for all scanned symbols
     from advanced_scanner.utils import get_json
     from advanced_scanner.config import BASE_URL
     tr_raw = get_json(BASE_URL+"/md/v3/ticker/24hr/all")
     tr = tr_raw.get("result", [])
     
-    # Map Phemex v3 fields to names n8n expects
     mapped_tickers = []
     for t in tr:
         mapped_tickers.append({
@@ -81,6 +90,5 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    import os
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
