@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Body, FastAPI, Header, HTTPException
 import argparse
 import numpy as np
 import os
@@ -6,12 +6,26 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from advanced_scanner.fetcher import bootstrap, fetch
 from advanced_scanner.scoring import extract_features, cross_sectional_score_ranking
 from advanced_scanner.config import KLINE_LIMIT, DEFAULT_CAPITAL, DEFAULT_RISK_PCT
+from simulation_state import (
+    get_simulation_snapshot,
+    merge_simulation_state,
+    reset_simulation_state,
+)
 
 # Optional: speed up bootstrap logs by disabling typewriter effect
 import advanced_scanner.utils
 advanced_scanner.utils.type_print = lambda text, delay=0: print(text)
 
 app = FastAPI()
+
+
+def _require_write_token(authorization: str | None) -> None:
+    expected_token = os.getenv("SIM_STATE_WRITE_TOKEN")
+    if not expected_token:
+        return
+
+    if authorization != f"Bearer {expected_token}":
+        raise HTTPException(status_code=401, detail="Invalid or missing simulation state bearer token")
 
 @app.get("/md/v2/ticker/24hr/all")
 def proxy_tickers():
@@ -84,9 +98,49 @@ def scan():
         "tickers": mapped_tickers
     }
 
+
+@app.get("/simulation/state")
+def simulation_state():
+    return get_simulation_snapshot()
+
+
+@app.get("/simulation/positions")
+def simulation_positions():
+    snapshot = get_simulation_snapshot()
+    return {
+        "updated_at": snapshot.get("updated_at"),
+        "source": snapshot.get("source"),
+        "session": snapshot.get("session"),
+        "positions": snapshot.get("positions", []),
+        "summary": snapshot.get("summary", {}),
+    }
+
+
+@app.put("/simulation/state")
+def upsert_simulation_state(
+    payload: dict = Body(...),
+    authorization: str | None = Header(default=None),
+):
+    _require_write_token(authorization)
+    return merge_simulation_state(payload)
+
+
+@app.delete("/simulation/state")
+def clear_simulation_state(authorization: str | None = Header(default=None)):
+    _require_write_token(authorization)
+    return reset_simulation_state()
+
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    snapshot = get_simulation_snapshot()
+    return {
+        "status": "ok",
+        "simulation": {
+            "updated_at": snapshot.get("updated_at"),
+            "open_positions_count": snapshot.get("summary", {}).get("open_positions_count", 0),
+            "equity": snapshot.get("summary", {}).get("equity", DEFAULT_CAPITAL),
+        },
+    }
 
 if __name__ == "__main__":
     import uvicorn
